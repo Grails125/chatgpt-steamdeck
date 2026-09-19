@@ -9,7 +9,7 @@ SteamOS 桌面模式一键安装，支持游戏模式启动、X11、自动全屏
 在 SteamOS **桌面模式**打开 Konsole，以普通用户运行，不要使用 sudo：
 
 ```bash
-curl -fL https://raw.githubusercontent.com/Grails125/chatgpt-steamdeck/v0.1.0/install.sh -o /tmp/chatgpt-deck-install.sh
+curl -fL https://raw.githubusercontent.com/Grails125/chatgpt-steamdeck/v0.1.1/install.sh -o /tmp/chatgpt-deck-install.sh
 bash /tmp/chatgpt-deck-install.sh
 ```
 

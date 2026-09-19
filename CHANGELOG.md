@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.1.1
+
+### [ZH-CN]
+
+- 首次正式打包发布；安装入口固定到 v0.1.1。
+- 发布流程增加手动触发入口，可选择版本标签重新执行发布。
+
+### [EN]
+
+- First packaged release; pin the bootstrap installer to v0.1.1.
+- Allow manual release workflow runs against a selected version tag.
+
 ## v0.1.0
 
 ### [ZH-CN]
