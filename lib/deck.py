@@ -257,6 +257,10 @@ def launch(args):
             env.pop(name, None)
         env.update(ELECTRON_OZONE_PLATFORM_HINT='x11', CODEX_LINUX_RENDERING_MODE='x11-gpu',
                    CHROME_DESKTOP='chatgpt-steamdeck.desktop')
+        # Steam's GTK IM module can double Electron text events in Game Mode.
+        # Composition remains in Steam's keyboard; desktop IME settings are kept.
+        if env.get('GAMESCOPE_WAYLAND_DISPLAY') or env.get('XDG_CURRENT_DESKTOP') == 'gamescope':
+            env['GTK_IM_MODULE'] = 'simple'
         binary = VERSIONS / version / 'ChatGPT'
         log = STATE / 'launcher.log'
         if log.exists() and log.stat().st_size > 5 * 1024**2:

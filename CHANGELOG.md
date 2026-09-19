@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.1.2
+
+### [ZH-CN]
+
+- 修复游戏模式中 Steam 屏幕键盘输入中英文时字符重复的问题：仅在游戏模式为 ChatGPT 设置 `GTK_IM_MODULE=simple`。
+- 保留桌面模式输入法配置；本机重启应用后已由用户确认输入正常。
+- 安装入口更新为 v0.1.2；已有用户需重新运行安装器并重启 ChatGPT。
+
+### [EN]
+
+- Fix doubled Steam on-screen keyboard input by setting `GTK_IM_MODULE=simple` for ChatGPT in Game Mode only.
+- Preserve Desktop Mode input-method settings; normal input confirmed on the source Deck after restarting the app.
+- Pin the installer to v0.1.2. Existing users should rerun the installer and restart ChatGPT.
+
 ## v0.1.1
 
 ### [ZH-CN]

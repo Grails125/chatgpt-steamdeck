@@ -9,7 +9,7 @@ SteamOS 桌面模式一键安装，支持游戏模式启动、X11、自动全屏
 在 SteamOS **桌面模式**打开 Konsole，以普通用户运行，不要使用 sudo：
 
 ```bash
-curl -fL https://raw.githubusercontent.com/Grails125/chatgpt-steamdeck/v0.1.1/install.sh -o /tmp/chatgpt-deck-install.sh
+curl -fL https://raw.githubusercontent.com/Grails125/chatgpt-steamdeck/v0.1.2/install.sh -o /tmp/chatgpt-deck-install.sh
 bash /tmp/chatgpt-deck-install.sh
 ```
 
@@ -62,6 +62,8 @@ bash /tmp/chatgpt-deck-install.sh
 | `~/.config/Codex/`、`~/.codex/` | 上游应用个人设置、登录和会话；不打包也不清理 |
 
 默认参数为 `--class=codex-desktop --ozone-platform=x11`。保留 Chromium 沙箱，不添加 `--no-sandbox`。额外启动参数可跟在 `chatgpt-deck launch` 后。本项目不设置代理，沿用用户环境与上游应用设置；不加入额外遥测。
+
+从 v0.1.2 起，游戏模式启动时设置 `GTK_IM_MODULE=simple`，解决 Steam 屏幕键盘在 Electron 应用中逐字重复的问题。桌面模式保留原输入法设置。此修复已在源设备重启 ChatGPT 后由用户确认；更新安装器后也需完全退出并重新启动应用。应用内的官方程序更新不会更新本项目启动器，已有用户请重新运行上面的安装命令获取启动器修复。
 
 ```bash
 ~/.local/bin/chatgpt-deck doctor
