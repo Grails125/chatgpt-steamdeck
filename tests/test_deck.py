@@ -117,5 +117,77 @@ class Metadata(unittest.TestCase):
             deck.parse_package(self.package().replace('amd64', 'arm64'))
 
 
+class Startup(unittest.TestCase):
+    setUp = Lifecycle.setUp
+    def test_primary_detection_flattened_and_nul_arguments(self):
+        proc = self.root / 'proc'
+        process = proc / '123'
+        process.mkdir(parents=True)
+        binary = self.versions / '26.2.0/ChatGPT'
+        (process / 'exe').symlink_to(binary)
+        for args in (b'ChatGPT\0--type=renderer\0', b'ChatGPT --type=gpu-process\0'):
+            (process / 'cmdline').write_bytes(args)
+            self.assertFalse(deck.primary_running(binary, proc))
+        (process / 'cmdline').write_bytes(b'ChatGPT --class=codex-desktop\0')
+        self.assertTrue(deck.primary_running(binary, proc))
+        self.assertFalse(deck.primary_running(binary, proc, uid=-1))
+        self.assertFalse(deck.primary_running(self.versions / '26.1.0/ChatGPT', proc))
+
+    def test_only_one_cold_start_and_pending_timeout(self):
+        binary = self.versions / '26.2.0/ChatGPT'
+        with patch.object(deck, 'primary_running', return_value=False):
+            with deck.startup_gate(binary) as reuse:
+                self.assertFalse(reuse)
+                with self.assertRaises(RuntimeError):
+                    with deck.startup_gate(binary, timeout=0):
+                        self.fail('Concurrent cold start allowed')
+            with deck.startup_gate(binary) as reuse:
+                self.assertFalse(reuse)  # Owner exit releases gate.
+
+    def test_busy_gate_reuses_visible_primary(self):
+        binary = self.versions / '26.2.0/ChatGPT'
+        with patch.object(deck, 'primary_running', return_value=False):
+            with deck.startup_gate(binary):
+                with patch.object(deck, 'primary_running', return_value=True):
+                    with deck.startup_gate(binary) as reuse:
+                        self.assertTrue(reuse)
+
+    def test_duplicate_launch_preserves_args_without_observers(self):
+        args = ['chatgpt://open?a=1&b=two', '--example', 'value with spaces']
+        with patch.object(deck, 'primary_running', return_value=True), \
+                patch.object(deck.subprocess, 'run') as run, \
+                patch.object(deck.subprocess, 'Popen') as popen, \
+                patch.object(deck, 'confirm') as confirm, \
+                patch.object(deck, 'own_window') as window:
+            run.return_value.returncode = 0
+            self.assertEqual(deck.launch(args), 0)
+            self.assertEqual(run.call_args.args[0][-3:], args)
+            popen.assert_not_called()
+            confirm.assert_not_called()
+            window.assert_not_called()
+        self.assertTrue(self.pending.exists())
+
+    def test_cli_forwards_launch_flags_unchanged(self):
+        with patch.object(deck.sys, 'argv', ['deck', 'launch', '--yes', '--help', 'chatgpt://open']), \
+                patch.object(deck, 'launch', return_value=0) as launch:
+            self.assertEqual(deck.main(), 0)
+            launch.assert_called_once_with(['--yes', '--help', 'chatgpt://open'])
+
+    def test_cold_launch_spawns_once_and_keeps_game_mode_fix(self):
+        with patch.object(deck, 'primary_running', return_value=False), \
+                patch.dict(deck.os.environ, {'GAMESCOPE_WAYLAND_DISPLAY': 'gamescope-0',
+                                            'GTK_IM_MODULE': 'Steam', 'LD_PRELOAD': 'overlay.so'}), \
+                patch.object(deck.subprocess, 'Popen') as popen:
+            popen.return_value.poll.return_value = 0
+            popen.return_value.wait.return_value = 0
+            self.assertEqual(deck.launch(['chatgpt://open']), 0)
+            popen.assert_called_once()
+            env = popen.call_args.kwargs['env']
+            self.assertEqual(env['GTK_IM_MODULE'], 'simple')
+            self.assertNotIn('LD_PRELOAD', env)
+            self.assertIn('--ozone-platform=x11', popen.call_args.args[0])
+        self.assertTrue(self.pending.exists())  # Early exit cannot confirm cleanup.
+
+
 if __name__ == '__main__':
     unittest.main()

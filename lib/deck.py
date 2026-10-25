@@ -247,6 +247,54 @@ def own_window(pid):
     return result.stdout.split()[0] if result.returncode == 0 and result.stdout.split() else None
 
 
+def primary_running(binary, proc=Path('/proc'), uid=None):
+    """Match our executable and user, including Chromium's flattened cmdline."""
+    uid = os.getuid() if uid is None else uid
+    for process in proc.iterdir():
+        if not process.name.isdigit():
+            continue
+        try:
+            if process.stat().st_uid != uid or Path(os.readlink(process / 'exe')) != binary:
+                continue
+            args = (process / 'cmdline').read_bytes()
+            if not args or re.search(rb'(?:^|[\x00\s])--type=', args):
+                continue
+            if Path(os.readlink(process / 'exe')) == binary:
+                return True
+        except (OSError, ValueError):
+            continue
+    return False
+
+
+@contextlib.contextmanager
+def startup_gate(binary, timeout=10):
+    """Yield True for IPC reuse, False for the sole cold-start supervisor.
+
+    Hold the gate for the primary session. A concurrent caller can reuse the
+    visible primary, or retry acquiring the gate if the first startup exits.
+    Never silently discard URI arguments when a startup remains unobservable.
+    """
+    STATE.mkdir(parents=True, exist_ok=True)
+    with (STATE / 'startup.lock').open('a') as gate:
+        deadline = time.monotonic() + timeout
+        while True:
+            acquired = False
+            try:
+                fcntl.flock(gate, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                acquired = True
+            except BlockingIOError:
+                pass
+            if primary_running(binary):
+                yield True
+                return
+            if acquired:
+                yield False
+                return
+            if time.monotonic() >= deadline:
+                raise RuntimeError('ChatGPT is still starting; retry opening the link shortly')
+            time.sleep(0.1)
+
+
 def launch(args):
     with lock('launch.lock', shared=True):
         version = current()
@@ -265,7 +313,13 @@ def launch(args):
         log = STATE / 'launcher.log'
         if log.exists() and log.stat().st_size > 5 * 1024**2:
             os.replace(log, log.with_suffix('.log.1'))
-        with log.open('a') as f:
+        with log.open('a') as f, startup_gate(binary) as reuse:
+            if reuse:
+                # Direct payloads have no FUSE lifecycle. Use native IPC without
+                # a second fullscreen helper or startup/cleanup observer.
+                return subprocess.run(
+                    [str(binary), '--class=codex-desktop', '--ozone-platform=x11', *args],
+                    env=env, stdout=f, stderr=f).returncode
             process = subprocess.Popen([str(binary), '--class=codex-desktop', '--ozone-platform=x11', *args],
                                        env=env, stdout=f, stderr=f)
             stable = None
@@ -305,6 +359,9 @@ def rollback():
 
 
 def main():
+    # Launch arguments belong to Electron, including --help/--yes and URIs.
+    if len(sys.argv) > 1 and sys.argv[1] == 'launch':
+        return launch(sys.argv[2:])
     parser = argparse.ArgumentParser()
     parser.add_argument('command', choices=['install', 'update', 'check', 'launch', 'rollback', 'doctor'])
     parser.add_argument('--yes', action='store_true')

@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### [ZH-CN]
+
+- 串行处理冷启动；已有主进程时仅转交参数给原生单实例 IPC，避免重复运行全屏及启动清理观察器。
+- 正确识别 Chromium 扁平化命令行中的子进程标记，完整保留 URI 和启动参数。并发启动超时明确报错，允许重试。
+- 此为针对重复启动风险的防护；不将尚未完整复现的 AppImage SIGBUS 归因视为已证明的根因。
+
+### [EN]
+
+- Serialize cold starts and use native second-instance IPC for an existing primary without duplicate fullscreen or startup-cleanup observers.
+- Recognize Chromium child-process markers in flattened command lines and preserve all launch arguments and URIs. Report concurrent startup timeouts for retry.
+- Defensive mitigation, not proof of the underlying cause of the observed AppImage SIGBUS incident.
+
 ## v0.1.2
 
 ### [ZH-CN]
