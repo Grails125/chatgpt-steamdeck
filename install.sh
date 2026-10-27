@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-release=v0.1.2
+release=v0.1.3
 source_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 if [[ ! -f "$source_dir/lib/deck.py" ]]; then
   work=$(mktemp -d -t chatgpt-steamdeck-install.XXXXXXXX)
