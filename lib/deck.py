@@ -145,6 +145,68 @@ def validate_payload(path):
         raise RuntimeError('ChatGPT is not executable')
 
 
+def appimage_offset(image):
+    with image.open('rb') as stream:
+        header = stream.read(4 * 1024 * 1024)
+    if not header.startswith(b'\x7fELF') or header[8:11] != b'AI\x02':
+        raise RuntimeError('Unsupported AppImage format')
+    # Runtime code also contains the magic bytes. Validate each candidate rather
+    # than confusing an embedded string with the real filesystem superblock.
+    offset = header.find(b'hsqs')
+    while offset >= 0:
+        result = subprocess.run(['unsquashfs', '-s', '-o', str(offset), str(image)],
+                                capture_output=True)
+        if result.returncode == 0:
+            return offset
+        offset = header.find(b'hsqs', offset + 4)
+    raise RuntimeError('No supported SquashFS payload found')
+
+
+def import_appimage(image, expected_hash):
+    """Migrate a previously verified local image without running its FUSE runtime.
+
+    The caller supplies the SHA-256 from their trusted installation record.
+    This command deliberately does not download or upgrade the application.
+    """
+    image = Path(image).resolve(strict=True)
+    if not re.fullmatch('[a-f0-9]{64}', expected_hash) or sha(image) != expected_hash:
+        raise RuntimeError('Source AppImage does not match the trusted SHA-256')
+    if not shutil.which('unsquashfs'):
+        raise RuntimeError('unsquashfs is required to migrate an AppImage')
+    DATA.mkdir(parents=True, exist_ok=True)
+    VERSIONS.mkdir(exist_ok=True)
+    with lock('update.lock'), lock('launch.lock'):
+        if current() is not None or (STATE / 'pending.json').exists():
+            raise RuntimeError('An unpacked installation already exists; migration refused')
+        # Locate the ELF AppImage's SquashFS payload without executing the image.
+        offset = appimage_offset(image)
+        with tempfile.TemporaryDirectory(prefix='import-', dir=DATA) as tmp:
+            extracted = Path(tmp) / 'root'
+            run(['unsquashfs', '-no-progress', '-o', str(offset), '-d', extracted,
+                 image, 'opt/codex-desktop'])
+            payload = extracted / 'opt/codex-desktop'
+            info = json.loads((payload / '.codex-linux/build-info.json').read_text())
+            version = info.get('package_version', '')
+            if not VERSION.fullmatch(version):
+                raise RuntimeError('Source AppImage version missing or invalid')
+            validate_payload(payload)
+            if sha(image) != expected_hash:
+                raise RuntimeError('Source AppImage changed during extraction')
+            destination = VERSIONS / version
+            if destination.exists() or destination.is_symlink():
+                raise RuntimeError('Version destination already exists; inspect it first')
+            package = {'Version': version, 'SHA256': info.get('package_sha256'),
+                       'ImportedAppImage': str(image), 'AppImageSHA256': expected_hash}
+            atomic_json(payload / 'deck-package.json', package)
+            os.rename(payload, destination)
+            tx = {'old': None, 'new': version, 'sha256': sha(destination / 'ChatGPT'),
+                  'package_sha256': info.get('package_sha256'),
+                  'legacy_appimage': str(image), 'legacy_sha256': expected_hash}
+            atomic_json(STATE / 'pending.json', tx)
+            activate(version)
+            print(f'Migrated {version} without FUSE. Original AppImage retained for recovery.')
+
+
 def install_update(initial=False, yes=False, check=False):
     dependencies()
     DATA.mkdir(parents=True, exist_ok=True)
@@ -214,6 +276,12 @@ def install_update(initial=False, yes=False, check=False):
             print(f'Installed {new}. Launch ChatGPT to confirm and clean update artifacts.')
 
 
+def legacy_image_in_use(image):
+    mounts = Path('/proc/mounts').read_text().splitlines()
+    return any(len(parts := line.split()) >= 3 and parts[0] == image.name
+               and parts[2] == 'fuse.' + image.name for line in mounts) or primary_running(image)
+
+
 def confirm(version):
     with lock('update.lock'):
         pending = STATE / 'pending.json'
@@ -233,10 +301,24 @@ def confirm(version):
         for path in paths:
             if path.is_symlink() or path.resolve() != path:
                 raise RuntimeError('Cleanup target is a symlink')
+        legacy = tx.get('legacy_appimage')
+        if legacy:
+            legacy = Path(legacy)
+            expected = tx.get('legacy_sha256', '')
+            if (not legacy.is_absolute() or legacy.is_symlink() or legacy.resolve() != legacy
+                    or not re.fullmatch('[a-f0-9]{64}', expected)):
+                raise RuntimeError('Invalid legacy AppImage cleanup target')
+            if legacy.exists():
+                if sha(legacy) != expected:
+                    raise RuntimeError('Legacy AppImage changed; retained for inspection')
+                if legacy_image_in_use(legacy):
+                    raise RuntimeError('Legacy AppImage is still in use; cleanup deferred')
         atomic_json(STATE / 'last-success.json', tx)
         for path in paths:
             if path.exists():
                 shutil.rmtree(path)
+        if legacy:
+            legacy.unlink(missing_ok=True)
         pending.unlink()
         print('Startup confirmed; installer, staging data and managed previous version removed.', flush=True)
 
@@ -314,6 +396,9 @@ def launch(args):
         if log.exists() and log.stat().st_size > 5 * 1024**2:
             os.replace(log, log.with_suffix('.log.1'))
         with log.open('a') as f, startup_gate(binary) as reuse:
+            print(f'[{time.strftime("%Y-%m-%dT%H:%M:%S%z")}] launch version={version} '
+                  f'route={"native-ipc" if reuse else "cold"} argument_count={len(args)}',
+                  file=f, flush=True)
             if reuse:
                 # Direct payloads have no FUSE lifecycle. Use native IPC without
                 # a second fullscreen helper or startup/cleanup observer.
@@ -342,6 +427,8 @@ def launch(args):
                     stable = None
                 time.sleep(2)
             code = process.wait()
+            print(f'[{time.strftime("%Y-%m-%dT%H:%M:%S%z")}] main-exit version={version} code={code}',
+                  file=f, flush=True)
             if code:
                 print(f'ChatGPT exited with {code}. See {log}; rollback is available if startup was not confirmed.')
             return code
@@ -362,6 +449,12 @@ def main():
     # Launch arguments belong to Electron, including --help/--yes and URIs.
     if len(sys.argv) > 1 and sys.argv[1] == 'launch':
         return launch(sys.argv[2:])
+    if len(sys.argv) > 1 and sys.argv[1] == 'import-appimage':
+        importer = argparse.ArgumentParser(description=import_appimage.__doc__)
+        importer.add_argument('image', type=Path)
+        importer.add_argument('--sha256', required=True)
+        options = importer.parse_args(sys.argv[2:])
+        return import_appimage(options.image, options.sha256)
     parser = argparse.ArgumentParser()
     parser.add_argument('command', choices=['install', 'update', 'check', 'launch', 'rollback', 'doctor'])
     parser.add_argument('--yes', action='store_true')

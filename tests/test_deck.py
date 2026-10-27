@@ -189,5 +189,77 @@ class Startup(unittest.TestCase):
         self.assertTrue(self.pending.exists())  # Early exit cannot confirm cleanup.
 
 
+class ImportAppImage(unittest.TestCase):
+    setUp = Lifecycle.setUp
+
+    def source(self):
+        image = self.root / 'ChatGPT.AppImage.real'
+        image.write_bytes(b'\x7fELF' + b'\0' * 4 + b'AI\x02' + b'hsqs false hsqs')
+        return image
+
+    def test_false_magic_is_skipped(self):
+        image = self.source()
+        with patch.object(deck.subprocess, 'run') as run:
+            from types import SimpleNamespace
+            run.side_effect = [SimpleNamespace(returncode=1), SimpleNamespace(returncode=0)]
+            self.assertEqual(deck.appimage_offset(image), image.read_bytes().rfind(b'hsqs'))
+
+    def test_wrong_hash_never_extracts(self):
+        with patch.object(deck, 'run') as run:
+            with self.assertRaises(RuntimeError):
+                deck.import_appimage(self.source(), '0' * 64)
+            run.assert_not_called()
+
+    def test_existing_install_is_preserved(self):
+        image = self.source()
+        with patch.object(deck.shutil, 'which', return_value='/usr/bin/unsquashfs'), \
+                patch.object(deck, 'run') as run:
+            with self.assertRaises(RuntimeError):
+                deck.import_appimage(image, deck.sha(image))
+            run.assert_not_called()
+        self.assertEqual(deck.current(), '26.2.0')
+
+    def test_import_keeps_original_and_records_startup_confirmation(self):
+        self.pending.unlink()
+        deck.CURRENT.unlink()
+        image = self.source()
+        original_hash = deck.sha(image)
+
+        def extract(args):
+            root = Path(args[args.index('-d') + 1]) / 'opt/codex-desktop'
+            (root / '.codex-linux').mkdir(parents=True)
+            (root / '.codex-linux/build-info.json').write_text(json.dumps(
+                {'package_version': '26.3.0', 'package_sha256': 'b' * 64}))
+            (root / 'ChatGPT').write_text('extracted app')
+
+        with patch.object(deck.shutil, 'which', return_value='/usr/bin/unsquashfs'), \
+                patch.object(deck, 'appimage_offset', return_value=100), \
+                patch.object(deck, 'run', side_effect=extract), \
+                patch.object(deck, 'validate_payload'):
+            deck.import_appimage(image, original_hash)
+        self.assertEqual(deck.current(), '26.3.0')
+        self.assertEqual(deck.sha(image), original_hash)
+        self.assertTrue(self.pending.exists())
+        with patch.object(deck, 'legacy_image_in_use', return_value=False):
+            deck.confirm('26.3.0')
+        self.assertFalse(image.exists())  # Deleted only after confirmed native start.
+        self.assertTrue((self.versions / '26.3.0/ChatGPT').exists())
+        self.assertFalse(list(self.data.glob('import-*')))
+
+    def test_live_or_changed_legacy_package_is_retained(self):
+        image = self.source()
+        self.tx.update(legacy_appimage=str(image), legacy_sha256=deck.sha(image))
+        deck.atomic_json(self.pending, self.tx)
+        with patch.object(deck, 'legacy_image_in_use', return_value=True):
+            with self.assertRaises(RuntimeError):
+                deck.confirm('26.2.0')
+        self.assertTrue(image.exists())
+        self.assertTrue(self.pending.exists())
+        image.write_text('changed')
+        with self.assertRaises(RuntimeError):
+            deck.confirm('26.2.0')
+        self.assertTrue(image.exists())
+
+
 if __name__ == '__main__':
     unittest.main()

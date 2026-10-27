@@ -4,12 +4,14 @@
 
 ### [ZH-CN]
 
+- 支持从受信任 SHA-256 校验的 AppImage 原地迁移为直接解包运行，避开挂载退出阶段的依赖；首次成功启动且原挂载退出后再删除旧包。
 - 串行处理冷启动；已有主进程时仅转交参数给原生单实例 IPC，避免重复运行全屏及启动清理观察器。
 - 正确识别 Chromium 扁平化命令行中的子进程标记，完整保留 URI 和启动参数。并发启动超时明确报错，允许重试。
 - 此为针对重复启动风险的防护；不将尚未完整复现的 AppImage SIGBUS 归因视为已证明的根因。
 
 ### [EN]
 
+- Import a trusted SHA-256-verified AppImage as a persistent unpacked payload; remove the source image only after a confirmed native launch and after its old mount exits.
 - Serialize cold starts and use native second-instance IPC for an existing primary without duplicate fullscreen or startup-cleanup observers.
 - Recognize Chromium child-process markers in flattened command lines and preserve all launch arguments and URIs. Report concurrent startup timeouts for retry.
 - Defensive mitigation, not proof of the underlying cause of the observed AppImage SIGBUS incident.

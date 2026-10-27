@@ -46,7 +46,20 @@ bash /tmp/chatgpt-deck-install.sh
 ~/.local/bin/chatgpt-deck rollback
 ```
 
-回退保留失败版本供排错。首次安装没有上一版本。旧的 `~/Applications/ChatGPT.AppImage` 安装及其历史文件不由本项目删除；若从旧方案迁移，先关闭旧应用、停用旧更新 timer，并改用新快捷方式，避免两个更新器同时工作。
+回退保留失败版本供排错。首次安装没有上一版本。普通安装流程不会清理旧的 `~/Applications/ChatGPT.AppImage` 安装及其历史文件；下面的显式迁移命令只会在确认成功后删除指定的原包。若从旧方案迁移，先关闭旧应用、停用旧更新 timer，并改用新快捷方式，避免两个更新器同时工作。
+
+### 从现有 AppImage 迁移以避开挂载退出问题
+
+已有受信任安装记录时，可保留相同应用版本并直接解包，避免 FUSE 挂载生命周期。检出包含迁移命令的仓库版本后，在仓库目录仅部署脚本入口，再使用原更新事务中记录的 **AppImage SHA-256**（不是 Debian 包 SHA-256）：
+
+```bash
+python3 lib/install.py
+~/.local/bin/chatgpt-deck import-appimage /absolute/path/to/ChatGPT.AppImage.real --sha256 <trusted-appimage-sha256>
+```
+
+迁移不会执行 AppImage 的运行时，也不会重新下载或升级程序；文件及系统库检查成功后才切换当前版本。原包保留到解包版窗口持续运行 60 秒，且原 FUSE 挂载和运行时都已退出，随后按记录的路径及 SHA-256 删除原包。校验值变化或原包仍在使用时会保留并记录延迟清理，不误删其他文件。没有受信任校验记录时请使用普通官方源安装流程。
+
+旧快捷方式可改为调用 `~/.local/bin/chatgpt-deck launch`；旧更新入口改为 `chatgpt-deck update`。同时停用 `chatgpt-update-check.timer`，启用 `chatgpt-deck-update.timer`。迁移前备份旧启动脚本，保留个人配置。迁移期间已经运行的旧进程不会自动替换，需完整退出后重新打开一次。
 
 ## 文件与运行配置
 
@@ -78,7 +91,7 @@ tail -n 80 ~/.local/state/chatgpt-steamdeck/launcher.log
 
 ## 验证范围
 
-项目源于一台 Steam Deck 的现有 X11 游戏模式安装。版本 0.1.0 改为直接运行经过签名校验的官方解包程序。13 项自动测试覆盖元数据解析、路径约束、更新状态、启动确认清理和回退；已在该 Deck 的隔离用户目录实测下载并校验 `26.915.31945`，通过系统库检查，全新配置窗口持续运行 60 秒后自动清理暂存数据。第二台 Deck 的实际安装、登录与语音功能仍需设备验收；不同 SteamOS 版本的依赖差异会由预检报告。
+项目源于一台 Steam Deck 的现有 X11 游戏模式安装。版本 0.1.0 改为直接运行经过签名校验的官方解包程序。24 项自动测试覆盖元数据解析、路径约束、更新状态、AppImage 迁移、启动确认清理和回退；已在该 Deck 实测下载并校验 `26.915.31945`，以及迁移 `26.1021.22027`。后者通过隔离用户目录的 60 秒窗口运行、重复打开 IPC 和退出测试；实际工作会话重启后也已确认解包版启动并删除旧包。可选的隔离测试入口为 `python3 tests/manual_unpacked_smoke.py`，额外依赖 bwrap 和 X11 会话；测试使用独立 PID 命名空间，不替代所有真实退出竞态验证。第二台 Deck 的实际安装、登录与语音功能仍需设备验收；不同 SteamOS 版本的依赖差异会由预检报告。
 
 ## English
 
